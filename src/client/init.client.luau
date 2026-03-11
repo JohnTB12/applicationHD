@@ -25,10 +25,6 @@ aimParams.IgnoreWater = true
 local aimIgnore = {}
 
 local function getBackpack()
-	local backpack = player:FindFirstChildOfClass("Backpack")
-	if backpack then
-		return backpack
-	end
 	return player:WaitForChild("Backpack")
 end
 

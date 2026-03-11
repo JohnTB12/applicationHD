@@ -8,13 +8,11 @@ local Workspace = game:GetService("Workspace")
 local PhysicsService = game:GetService("PhysicsService")
 
 local cfg = {
-	 -- can be tweaked according to personal preference
 	collisionGroup = "Projectiles",
 	poolStart = 16,
 	poolMax = 42,
 	maxActive = 42,
 	cooldown = 0.3,
-	maxAimDistance = 500,
 	speed = 180,
 	life = 4.2,
 	range = 320,
@@ -35,28 +33,17 @@ local playerState = {}
 local projectilePool = {}
 local activeProjectiles = {}
 
-local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-if not remotes then
-	remotes = Instance.new("Folder")
-	remotes.Name = "Remotes"
-	remotes.Parent = ReplicatedStorage
-end
+local remotes = ReplicatedStorage:FindFirstChild("Remotes") or Instance.new("Folder")
+remotes.Name = "Remotes"
+remotes.Parent = ReplicatedStorage
 
-local fireRemote = remotes:FindFirstChild("FireProjectile")
-if not fireRemote then
-	fireRemote = Instance.new("RemoteEvent")
-	fireRemote.Name = "FireProjectile"
-	fireRemote.Parent = remotes
-elseif not fireRemote:IsA("RemoteEvent") then
-	error("ReplicatedStorage.Remotes.FireProjectile must be a RemoteEvent")
-end
+local fireRemote = remotes:FindFirstChild("FireProjectile") or Instance.new("RemoteEvent")
+fireRemote.Name = "FireProjectile"
+fireRemote.Parent = remotes
 
-local assets = ReplicatedStorage:FindFirstChild("Assets")
-if not assets then
-	assets = Instance.new("Folder")
-	assets.Name = "Assets"
-	assets.Parent = ReplicatedStorage
-end
+local assets = ReplicatedStorage:FindFirstChild("Assets") or Instance.new("Folder")
+assets.Name = "Assets"
+assets.Parent = ReplicatedStorage
 
 local template = assets:FindFirstChild("ProjectileTemplate")
 if not template then
@@ -73,8 +60,6 @@ if not template then
 	template.CanQuery = false
 	template.CanTouch = false
 	template.Parent = assets
-elseif not template:IsA("BasePart") then
-	error("ReplicatedStorage.Assets.ProjectileTemplate must be a BasePart")
 end
 
 local projectileFolder = Workspace:FindFirstChild("Projectiles") or Instance.new("Folder")
@@ -82,20 +67,16 @@ projectileFolder.Name = "Projectiles"
 projectileFolder.Parent = Workspace
 
 local function setupCollisionGroup(groupName)
-	-- Studio can keep collision groups between play sessions.
+	-- collision groups persist between studio runs
 	local ok, err = pcall(function()
 		PhysicsService:RegisterCollisionGroup(groupName)
 	end)
-	if not ok then
-		warn("Projectile collision group registration failed:", err)
-	end
+	if not ok then warn("collision group register:", err) end
 
 	ok, err = pcall(function()
 		PhysicsService:CollisionGroupSetCollidable(groupName, groupName, false)
 	end)
-	if not ok then
-		warn("Projectile collision group collidable setup failed:", err)
-	end
+	if not ok then warn("collision group collidable:", err) end
 end
 
 local function damageAt(distance)
@@ -110,42 +91,21 @@ local function damageAt(distance)
 end
 
 local function findHumanoid(part)
-	local model = part and part:FindFirstAncestorOfClass("Model")
-	while model do
-		local hum = model:FindFirstChildOfClass("Humanoid")
-		if hum then
-			return hum
-		end
-		model = model.Parent and model.Parent:FindFirstAncestorOfClass("Model")
-	end
-	return nil
+	local model = part:FindFirstAncestorWhichIsA("Model")
+	return model and model:FindFirstChildOfClass("Humanoid")
 end
 
 local function isFriendly(shooter, hum)
-	if cfg.allowFriendlyFire then
-		return false
-	end
+	if cfg.allowFriendlyFire then return false end
 	local target = hum and Players:GetPlayerFromCharacter(hum.Parent)
-	if not shooter or not target then
-		return false
-	end
-	if shooter == target then
-		return true
-	end
-	if shooter.Team and target.Team and shooter.Team == target.Team then
-		return true
-	end
-	return not shooter.Neutral and not target.Neutral and shooter.TeamColor == target.TeamColor
+	if not shooter or not target then return false end
+	if shooter == target then return true end
+	return shooter.Team ~= nil and shooter.Team == target.Team
 end
 
 local function canPlayerShoot(state)
-	if not state then
-		return false
-	end
-	if #activeProjectiles >= cfg.maxActive then
-		return false
-	end
-	return os.clock() - state.lastFire >= cfg.cooldown
+	if not state then return false end
+	return #activeProjectiles < cfg.maxActive and os.clock() - state.lastFire >= cfg.cooldown
 end
 
 local function getAliveRoot(player)
@@ -163,14 +123,10 @@ local function getAliveRoot(player)
 	if root and root:IsA("BasePart") then
 		return root
 	end
-	return nil
 end
 
 local function buildDirection(origin, target, fallbackLook)
 	local dir = target - origin
-	if dir.Magnitude > cfg.maxAimDistance then
-		dir = dir.Unit * cfg.maxAimDistance
-	end
 	if dir.Magnitude < 0.01 then
 		return fallbackLook
 	end
@@ -181,7 +137,7 @@ local function validateFire(player, target)
 	if typeof(target) ~= "Vector3" then
 		return false
 	end
-	if target.X ~= target.X or target.Y ~= target.Y or target.Z ~= target.Z then
+	if target.X ~= target.X or target.Y ~= target.Y or target.Z ~= target.Z then -- just checking for NaN:)
 		return false
 	end
 
@@ -230,7 +186,10 @@ function Projectile:Activate(shooter, origin, direction)
 	self.velocity = direction * cfg.speed
 	self.spawnTime = os.clock()
 	self.distance = 0
-	self.ignore = { self.part, projectileFolder, shooter.Character }
+	self.ignore = { self.part, projectileFolder }
+	if shooter.Character then
+		table.insert(self.ignore, shooter.Character)
+	end
 	self.raycastParams.FilterDescendantsInstances = self.ignore
 
 	self.part.Transparency = 0
@@ -249,7 +208,6 @@ function Projectile:Deactivate()
 end
 
 function Projectile:Step(dt)
-	-- paranoia guard
 	if not self.active then
 		return
 	end
@@ -305,10 +263,6 @@ function Projectile:Step(dt)
 	end
 
 	self.part.CFrame = CFrame.lookAt(to, to + self.direction)
-
-	if os.clock() - self.spawnTime >= cfg.life or self.distance >= cfg.range then
-		self:Deactivate()
-	end
 end
 
 local function makePoolProjectile()
@@ -367,8 +321,7 @@ local function stepAll(dt)
 		local projectile = activeProjectiles[i]
 		projectile:Step(dt)
 		if not projectile.active then
-			-- remove without shifting the whole array
-			activeProjectiles[i] = activeProjectiles[#activeProjectiles]
+			activeProjectiles[i] = activeProjectiles[#activeProjectiles] -- swap remove, don't care about order
 			activeProjectiles[#activeProjectiles] = nil
 		end
 	end
@@ -382,7 +335,6 @@ local function init()
 		playerState[player] = { lastFire = 0 }
 		player.CharacterAdded:Connect(function()
 			local state = playerState[player]
-			-- Guard in case PlayerRemoving ran before this callback fired.
 			if state then
 				state.lastFire = 0
 			end
